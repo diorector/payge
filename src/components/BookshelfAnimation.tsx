@@ -21,6 +21,9 @@ const BOOK_COLORS = [
   "#BB8FCE",
 ];
 
+// Pre-computed book heights to avoid Math.random() during render
+const BOOK_HEIGHTS = [72, 85, 64, 91, 78, 68, 95, 74, 88, 81];
+
 export default function BookshelfAnimation({
   totalSlots = 10,
   filledSlots,
@@ -51,7 +54,7 @@ export default function BookshelfAnimation({
                 <div
                   className="w-full rounded-t-sm animate-slide-in-book"
                   style={{
-                    height: `${60 + Math.random() * 40}%`,
+                    height: `${BOOK_HEIGHTS[i % BOOK_HEIGHTS.length]}%`,
                     backgroundColor: BOOK_COLORS[i % BOOK_COLORS.length],
                     animationDelay: `${i * 0.1}s`,
                   }}
