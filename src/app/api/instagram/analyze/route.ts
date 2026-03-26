@@ -75,17 +75,20 @@ async function runPreAnalysis(
   if (profile && !profile.isPrivate) {
     // Real data available — use it
     const profileData = formatProfileForAI(profile);
-    const captionCount = profile.recentCaptions.length;
+    const captionCount = profile.captions.length || profile.recentCaptions.length;
+    const hasEngagement = profile.captions.some(
+      (c) => c.likeCount !== undefined
+    );
 
     console.log(
-      `[preAnalysis] Scraped @${instagramId}: ${captionCount} captions, ${profile.followerCount} followers`
+      `[preAnalysis] Scraped @${instagramId}: ${captionCount} captions, ${profile.followerCount} followers, engagement: ${hasEngagement}`
     );
 
     userMessage = `${profileData}
 
-위 인스타그램 프로필과 게시물 캡션을 분석해서 독서 DNA를 진단해주세요.
+위 인스타그램 프로필과 게시물을 분석해서 독서 DNA를 진단해주세요.
 ${captionCount > 0
-  ? `캡션 ${captionCount}개를 기반으로 이 사람의 관심사, 말투, 가치관을 파악하고 evidence에 구체적 캡션 내용을 인용하세요.`
+  ? `캡션 ${captionCount}개를 기반으로 이 사람의 관심사, 말투, 가치관을 파악하고 evidence에 구체적 캡션 내용을 인용하세요.${hasEngagement ? "\n좋아요/댓글 수를 참고하여 어떤 콘텐츠에 이 사람의 팔로워가 가장 많이 반응하는지도 분석하세요." : ""}`
   : "캡션을 가져오지 못했지만, 바이오와 프로필 정보를 최대한 활용하세요."}
 personalizedQuestions에서 반드시 이 사람의 실제 인스타 활동을 언급하세요.
 
