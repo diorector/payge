@@ -93,11 +93,11 @@ async function tryRapidAPI(
 
     const [infoRes, postsRes] = await Promise.all([
       fetch(
-        `https://${RAPIDAPI_HOST}/v1/info?username_or_id=${encodeURIComponent(username)}`,
+        `https://${RAPIDAPI_HOST}/userinfo/?username_or_id=${encodeURIComponent(username)}`,
         { headers, signal: AbortSignal.timeout(15000) }
       ),
       fetch(
-        `https://${RAPIDAPI_HOST}/v1/posts?username_or_id=${encodeURIComponent(username)}`,
+        `https://${RAPIDAPI_HOST}/userposts/?username_or_id=${encodeURIComponent(username)}`,
         { headers, signal: AbortSignal.timeout(20000) }
       ),
     ]);
@@ -108,48 +108,34 @@ async function tryRapidAPI(
     }
 
     const infoData = await infoRes.json();
-
-    // Debug: log the raw response structure to find where user data lives
-    const topKeys = Object.keys(infoData || {});
-    console.log(`[scraper] RapidAPI 2025 info response top-level keys: ${JSON.stringify(topKeys)}`);
-    console.log(`[scraper] RapidAPI 2025 info response (truncated): ${JSON.stringify(infoData).slice(0, 1000)}`);
-
-    // Store raw debug info for API response inspection
-    (globalThis as Record<string, unknown>).__rapidapi_debug = {
-      infoTopKeys: topKeys,
-      infoSample: JSON.stringify(infoData).slice(0, 2000),
-    };
+    console.log(`[scraper] RapidAPI 2025 info keys: ${JSON.stringify(Object.keys(infoData || {}))}`);
 
     // Try multiple possible response structures
     const user =
-      infoData?.data?.user ||   // might be nested under data.user
-      infoData?.data ||          // might be directly under data
-      infoData?.user ||          // might be under user
-      infoData;                  // might be the top-level object itself
+      infoData?.data?.user ||
+      infoData?.data ||
+      infoData?.user ||
+      infoData;
 
     if (!user || (!user.username && !user.full_name)) {
-      console.log(`[scraper] RapidAPI 2025: no user data found in any known path`);
+      console.log(`[scraper] RapidAPI 2025: no user data. Response sample: ${JSON.stringify(infoData).slice(0, 500)}`);
       return null;
     }
 
-    console.log(`[scraper] RapidAPI 2025 parsed user: username=${user.username}, followers=${user.follower_count}, posts=${user.media_count}`);
+    const followerCount = user.follower_count ?? user.edge_followed_by?.count ?? 0;
+    const followingCount = user.following_count ?? user.edge_follow?.count ?? 0;
+    const postCount = user.media_count ?? user.edge_owner_to_timeline_media?.count ?? 0;
 
-    // Also try alternative field names
-    const followerCount = user.follower_count ?? user.edge_followed_by?.count ?? user.followers ?? 0;
-    const followingCount = user.following_count ?? user.edge_follow?.count ?? user.following ?? 0;
-    const postCount = user.media_count ?? user.edge_owner_to_timeline_media?.count ?? user.posts ?? 0;
+    console.log(`[scraper] RapidAPI 2025 user: @${user.username}, followers=${followerCount}, posts=${postCount}`);
 
     // Extract posts
     let captions: InstagramCaption[] = [];
     if (postsRes.ok) {
       const postsData = await postsRes.json();
-      console.log(`[scraper] RapidAPI 2025 posts response top-level keys: ${JSON.stringify(Object.keys(postsData || {}))}`);
-      console.log(`[scraper] RapidAPI 2025 posts response (truncated): ${JSON.stringify(postsData).slice(0, 1000)}`);
 
       // Try multiple possible post structures
       const items =
         postsData?.data?.items ||
-        postsData?.data?.edges ||
         postsData?.data ||
         postsData?.items ||
         postsData?.edges ||
@@ -157,19 +143,13 @@ async function tryRapidAPI(
       captions = extractCaptionsFromRapidAPI(
         Array.isArray(items) ? items : []
       );
-
-      // Store posts debug too
-      (globalThis as Record<string, unknown>).__rapidapi_debug = {
-        ...((globalThis as Record<string, unknown>).__rapidapi_debug as Record<string, unknown> || {}),
-        postsTopKeys: Object.keys(postsData || {}),
-        postsSample: JSON.stringify(postsData).slice(0, 2000),
-      };
+      console.log(`[scraper] RapidAPI 2025 posts: ${captions.length} captions extracted`);
     }
 
     return {
       username: user.username || username,
-      fullName: user.full_name || user.fullName || "",
-      biography: user.biography || user.bio || "",
+      fullName: user.full_name || "",
+      biography: user.biography || "",
       followerCount,
       followingCount,
       postCount,

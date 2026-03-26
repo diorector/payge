@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 // GET /api/instagram/debug?username=kimdohyungg
-// Returns raw RapidAPI response for debugging response structure
+// Returns raw RapidAPI responses for debugging
 export async function GET(request: NextRequest) {
   const username = request.nextUrl.searchParams.get("username");
   if (!username) {
@@ -21,11 +21,11 @@ export async function GET(request: NextRequest) {
 
   try {
     const [infoRes, postsRes] = await Promise.all([
-      fetch(`https://${host}/v1/info?username_or_id=${encodeURIComponent(username)}`, {
+      fetch(`https://${host}/userinfo/?username_or_id=${encodeURIComponent(username)}`, {
         headers,
         signal: AbortSignal.timeout(15000),
       }),
-      fetch(`https://${host}/v1/posts?username_or_id=${encodeURIComponent(username)}`, {
+      fetch(`https://${host}/userposts/?username_or_id=${encodeURIComponent(username)}`, {
         headers,
         signal: AbortSignal.timeout(20000),
       }),
@@ -43,10 +43,10 @@ export async function GET(request: NextRequest) {
       posts: {
         status: postsRes.status,
         ok: postsRes.ok,
-        // Only include first 2000 chars to avoid massive response
+        // Truncate posts to avoid massive response
         body: typeof postsBody === "string"
-          ? postsBody.slice(0, 2000)
-          : JSON.parse(JSON.stringify(postsBody, null, 0).slice(0, 5000)),
+          ? postsBody.slice(0, 3000)
+          : JSON.parse(JSON.stringify(postsBody, null, 0).slice(0, 8000)),
       },
     });
   } catch (e) {
