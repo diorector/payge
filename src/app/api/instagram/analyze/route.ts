@@ -75,17 +75,20 @@ async function runPreAnalysis(
   if (profile && !profile.isPrivate) {
     // Real data available — use it
     const profileData = formatProfileForAI(profile);
-    const captionCount = profile.recentCaptions.length;
+    const captionCount = profile.captions.length || profile.recentCaptions.length;
+    const hasEngagement = profile.captions.some(
+      (c) => c.likeCount !== undefined
+    );
 
     console.log(
-      `[preAnalysis] Scraped @${instagramId}: ${captionCount} captions, ${profile.followerCount} followers`
+      `[preAnalysis] Scraped @${instagramId}: ${captionCount} captions, ${profile.followerCount} followers, engagement: ${hasEngagement}`
     );
 
     userMessage = `${profileData}
 
-위 인스타그램 프로필과 게시물 캡션을 분석해서 독서 DNA를 진단해주세요.
+위 인스타그램 프로필과 게시물을 분석해서 독서 DNA를 진단해주세요.
 ${captionCount > 0
-  ? `캡션 ${captionCount}개를 기반으로 이 사람의 관심사, 말투, 가치관을 파악하고 evidence에 구체적 캡션 내용을 인용하세요.`
+  ? `캡션 ${captionCount}개를 기반으로 이 사람의 관심사, 말투, 가치관을 파악하고 evidence에 구체적 캡션 내용을 인용하세요.${hasEngagement ? "\n좋아요/댓글 수를 참고하여 어떤 콘텐츠에 이 사람의 팔로워가 가장 많이 반응하는지도 분석하세요." : ""}`
   : "캡션을 가져오지 못했지만, 바이오와 프로필 정보를 최대한 활용하세요."}
 personalizedQuestions에서 반드시 이 사람의 실제 인스타 활동을 언급하세요.
 
@@ -188,41 +191,58 @@ ${JSON.stringify(preAnalysis.instantBook)}
   };
 }
 
+// Reverse-scored item IDs (even-numbered, matching mini-IPIP convention)
+// E.g., IC2 and IC4 are reverse-scored for Intellectual Curiosity
+const REVERSE_SCORED_ITEMS = new Set([
+  "IC2", "IC4", "EE2", "EE4", "ED2", "ED4", "ID2", "ID4", "CI2", "CI4",
+]);
+
+const TRAIT_TO_DIM: Record<string, "intellectualCuriosity" | "emotionalEmpathy" | "executionDrive" | "introspectionDepth" | "creativeIntegration"> = {
+  IC: "intellectualCuriosity",
+  EE: "emotionalEmpathy",
+  ED: "executionDrive",
+  ID: "introspectionDepth",
+  CI: "creativeIntegration",
+};
+
 function adjustScoresWithAnswers(
   preAnalysis: PreAnalysisResult,
   answers: number[]
 ) {
   const adjusted = JSON.parse(JSON.stringify(preAnalysis)) as PreAnalysisResult;
-  const dimensionKeys = [
-    "intellectualCuriosity",
-    "emotionalEmpathy",
-    "executionDrive",
-    "introspectionDepth",
-    "creativeIntegration",
-  ] as const;
 
+  // Step 1: Apply reverse scoring to items (normalize scores like mini-IPIP)
+  if (adjusted.items) {
+    for (const item of adjusted.items) {
+      if (REVERSE_SCORED_ITEMS.has(item.itemId)) {
+        item.score = 6 - item.score; // Reverse: 1↔5, 2↔4, 3 stays
+      }
+    }
+
+    // Recalculate dimension scores from items (like Love Virtually's calculateBigFive)
+    for (const [trait, dimKey] of Object.entries(TRAIT_TO_DIM)) {
+      const dimItems = adjusted.items.filter((item) =>
+        item.itemId.startsWith(trait)
+      );
+      if (dimItems.length > 0) {
+        const sum = dimItems.reduce((s, item) => s + item.score, 0);
+        // Normalize: (sum - numItems) / (numItems * 4) maps to 0-1
+        const normalized = Math.max(0, Math.min(1,
+          (sum - dimItems.length) / (dimItems.length * 4)
+        ));
+        adjusted.readingDNA[dimKey].score = Math.round(normalized * 100) / 100;
+      }
+    }
+  }
+
+  // Step 2: Blend with user's question answers (70% item-based + 30% answer)
   preAnalysis.personalizedQuestions.forEach((q, i) => {
     if (answers[i] === undefined) return;
     const answerWeight = q.scores[answers[i]] ?? 0.5;
-    const dimIndex = dimensionKeys.findIndex(
-      (k) =>
-        k.charAt(0).toUpperCase() + k.charAt(k.indexOf(k.match(/[A-Z]/g)?.[1] ?? "") || 1) ===
-        q.trait
-    );
 
-    // Match trait code to dimension key
-    const traitToDim: Record<string, (typeof dimensionKeys)[number]> = {
-      IC: "intellectualCuriosity",
-      EE: "emotionalEmpathy",
-      ED: "executionDrive",
-      ID: "introspectionDepth",
-      CI: "creativeIntegration",
-    };
-
-    const dimKey = traitToDim[q.trait];
+    const dimKey = TRAIT_TO_DIM[q.trait];
     if (dimKey && adjusted.readingDNA[dimKey]) {
       const current = adjusted.readingDNA[dimKey].score;
-      // Weighted blend: 70% preAnalysis + 30% answer
       adjusted.readingDNA[dimKey].score =
         Math.round((current * 0.7 + answerWeight * 0.3) * 100) / 100;
       // Increase confidence since we now have user confirmation
@@ -234,8 +254,6 @@ function adjustScoresWithAnswers(
         adjusted.readingDNA[dimKey].score
       );
     }
-
-    void dimIndex; // unused, using traitToDim mapping instead
   });
 
   return adjusted;

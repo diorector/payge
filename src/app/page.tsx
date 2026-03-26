@@ -1,10 +1,42 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAnalysis } from "@/lib/analysis-context";
 
 const ROTATING_WORDS = ["찾아", "골라", "처방해"];
+
+// Dynamic deadline: always 2 days from now at midnight KST
+function getDeadline(): Date {
+  const now = new Date();
+  const kst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  kst.setDate(kst.getDate() + 2);
+  kst.setHours(0, 0, 0, 0);
+  return kst;
+}
+
+function useCountdown() {
+  const deadline = useMemo(() => getDeadline(), []);
+  const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0 });
+
+  useEffect(() => {
+    function calc() {
+      const now = new Date();
+      const kstNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+      const diff = Math.max(0, deadline.getTime() - kstNow.getTime());
+      setTimeLeft({
+        hours: Math.floor(diff / 3600000),
+        minutes: Math.floor((diff % 3600000) / 60000),
+        seconds: Math.floor((diff % 60000) / 1000),
+      });
+    }
+    calc();
+    const interval = setInterval(calc, 1000);
+    return () => clearInterval(interval);
+  }, [deadline]);
+
+  return timeLeft;
+}
 
 export default function LandingPage() {
   const router = useRouter();
@@ -12,7 +44,7 @@ export default function LandingPage() {
   const [inputId, setInputId] = useState("");
   const [wordIndex, setWordIndex] = useState(0);
   const [todayCount, setTodayCount] = useState(2341);
-  const [daysLeft] = useState(7);
+  const countdown = useCountdown();
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -117,28 +149,24 @@ export default function LandingPage() {
 
       <div className="w-full max-w-sm">
         <div className="flex items-center justify-center gap-2 text-sm">
-          <span className="text-[var(--muted)]">이 분석은</span>
-          <span className="font-bold text-[var(--foreground)] bg-[var(--accent)] px-2 py-0.5 rounded-md">
-            {daysLeft}일
+          <span className="text-[var(--muted)]">무료 분석 마감까지</span>
+        </div>
+        <div className="flex items-center justify-center gap-1 mt-2 font-mono text-lg font-bold tabular-nums">
+          <span className="bg-[var(--accent)] text-[var(--foreground)] px-2 py-1 rounded-md min-w-[2.5rem] text-center">
+            {String(countdown.hours).padStart(2, "0")}
           </span>
-          <span className="text-[var(--muted)]">후 마감됩니다</span>
+          <span className="text-[var(--muted)]">:</span>
+          <span className="bg-[var(--accent)] text-[var(--foreground)] px-2 py-1 rounded-md min-w-[2.5rem] text-center">
+            {String(countdown.minutes).padStart(2, "0")}
+          </span>
+          <span className="text-[var(--muted)]">:</span>
+          <span className="bg-[var(--accent)] text-[var(--foreground)] px-2 py-1 rounded-md min-w-[2.5rem] text-center">
+            {String(countdown.seconds).padStart(2, "0")}
+          </span>
         </div>
-        <div className="flex items-end justify-center gap-0.5 h-8 mt-3">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div
-              key={i}
-              className="w-2 rounded-t-sm transition-all duration-1000"
-              style={{
-                height: i < 12 - daysLeft + 5 ? `${40 + i * 5}%` : "0%",
-                backgroundColor:
-                  i < 12 - daysLeft + 5
-                    ? `hsl(${75 + i * 8}, 80%, 60%)`
-                    : "transparent",
-                opacity: i < 12 - daysLeft + 5 ? 1 : 0,
-              }}
-            />
-          ))}
-        </div>
+        <p className="text-xs text-[var(--muted)] text-center mt-2">
+          이후 유료 전환 예정
+        </p>
       </div>
     </main>
   );

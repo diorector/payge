@@ -1,3 +1,11 @@
+export interface InstagramCaption {
+  text: string;
+  timestamp?: string; // ISO date or unix timestamp
+  likeCount?: number;
+  commentCount?: number;
+  mediaType?: string; // "IMAGE" | "VIDEO" | "CAROUSEL_ALBUM"
+}
+
 export interface InstagramProfile {
   username: string;
   fullName: string;
@@ -9,7 +17,8 @@ export interface InstagramProfile {
   profilePicUrl: string;
   externalUrl: string;
   category: string;
-  recentCaptions: string[]; // up to ~12 recent post captions
+  recentCaptions: string[]; // plain text captions for backward compat
+  captions: InstagramCaption[]; // rich caption data with engagement metrics
 }
 
 /**
@@ -69,7 +78,7 @@ async function tryWebProfileAPI(
     const user = data?.data?.user;
     if (!user) return null;
 
-    const recentCaptions = extractCaptionsFromEdges(
+    const captions = extractRichCaptionsFromEdges(
       user.edge_owner_to_timeline_media?.edges
     );
 
@@ -84,7 +93,8 @@ async function tryWebProfileAPI(
       profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
       externalUrl: user.external_url || "",
       category: user.category_name || "",
-      recentCaptions,
+      recentCaptions: captions.map((c) => c.text),
+      captions,
     };
   } catch {
     return null;
@@ -155,6 +165,7 @@ async function tryHTMLScrape(
       const edges = (
         user as { edge_owner_to_timeline_media?: { edges?: unknown[] } }
       ).edge_owner_to_timeline_media?.edges;
+      const captions = extractRichCaptionsFromEdges(edges as unknown[]);
       return {
         username,
         fullName:
@@ -185,7 +196,8 @@ async function tryHTMLScrape(
           (user as { profile_pic_url_hd?: string }).profile_pic_url_hd || "",
         externalUrl: (user as { external_url?: string }).external_url || "",
         category: (user as { category_name?: string }).category_name || "",
-        recentCaptions: extractCaptionsFromEdges(edges as unknown[]),
+        recentCaptions: captions.map((c) => c.text),
+        captions,
       };
     }
 
@@ -203,6 +215,7 @@ async function tryHTMLScrape(
         externalUrl: "",
         category: "",
         recentCaptions: [],
+        captions: [],
       };
     }
 
@@ -248,21 +261,55 @@ async function tryMobileAPI(
       externalUrl: "",
       category: "",
       recentCaptions: [],
+      captions: [],
     };
   } catch {
     return null;
   }
 }
 
-function extractCaptionsFromEdges(edges: unknown[] | undefined): string[] {
+const MAX_CAPTIONS = 25;
+
+interface EdgeNode {
+  node?: {
+    edge_media_to_caption?: { edges?: { node?: { text?: string } }[] };
+    taken_at_timestamp?: number;
+    edge_liked_by?: { count?: number };
+    edge_media_preview_like?: { count?: number };
+    edge_media_to_comment?: { count?: number };
+    __typename?: string;
+    is_video?: boolean;
+  };
+}
+
+function extractRichCaptionsFromEdges(
+  edges: unknown[] | undefined
+): InstagramCaption[] {
   if (!Array.isArray(edges)) return [];
-  return edges
-    .slice(0, 12)
-    .map((edge) => {
-      const node = (edge as { node?: { edge_media_to_caption?: { edges?: { node?: { text?: string } }[] } } }).node;
-      return node?.edge_media_to_caption?.edges?.[0]?.node?.text ?? "";
-    })
-    .filter((caption) => caption.length > 0);
+  const results: InstagramCaption[] = [];
+  for (const edge of (edges as EdgeNode[]).slice(0, MAX_CAPTIONS)) {
+    const node = edge.node;
+    const text =
+      node?.edge_media_to_caption?.edges?.[0]?.node?.text ?? "";
+    if (!text) continue;
+
+    results.push({
+      text,
+      timestamp: node?.taken_at_timestamp
+        ? new Date(node.taken_at_timestamp * 1000).toISOString()
+        : undefined,
+      likeCount:
+        node?.edge_liked_by?.count ??
+        node?.edge_media_preview_like?.count,
+      commentCount: node?.edge_media_to_comment?.count,
+      mediaType: node?.is_video
+        ? "VIDEO"
+        : node?.__typename === "GraphSidecar"
+          ? "CAROUSEL_ALBUM"
+          : "IMAGE",
+    });
+  }
+  return results;
 }
 
 function extractMeta(html: string, property: string): string | null {
@@ -343,10 +390,35 @@ export function formatProfileForAI(profile: InstagramProfile): string {
     sections.push(`외부 링크: ${profile.externalUrl}`);
   }
 
-  if (profile.recentCaptions.length > 0) {
-    sections.push(`\n## 최근 게시물 캡션 (${profile.recentCaptions.length}개)`);
+  if (profile.captions.length > 0) {
+    sections.push(`\n## 최근 게시물 (${profile.captions.length}개)`);
+    profile.captions.forEach((caption, i) => {
+      const truncated =
+        caption.text.length > 500
+          ? caption.text.slice(0, 500) + "..."
+          : caption.text;
+
+      const meta: string[] = [];
+      if (caption.mediaType) meta.push(`타입: ${caption.mediaType}`);
+      if (caption.likeCount !== undefined)
+        meta.push(`좋아요: ${caption.likeCount}`);
+      if (caption.commentCount !== undefined)
+        meta.push(`댓글: ${caption.commentCount}`);
+      if (caption.timestamp) {
+        const date = new Date(caption.timestamp);
+        meta.push(`날짜: ${date.toISOString().split("T")[0]}`);
+      }
+
+      sections.push(
+        `\n### 게시물 ${i + 1}${meta.length > 0 ? ` (${meta.join(", ")})` : ""}\n"${truncated}"`
+      );
+    });
+  } else if (profile.recentCaptions.length > 0) {
+    // Fallback to plain captions
+    sections.push(
+      `\n## 최근 게시물 캡션 (${profile.recentCaptions.length}개)`
+    );
     profile.recentCaptions.forEach((caption, i) => {
-      // Truncate very long captions
       const truncated =
         caption.length > 500 ? caption.slice(0, 500) + "..." : caption;
       sections.push(`\n### 게시물 ${i + 1}\n"${truncated}"`);
