@@ -32,17 +32,26 @@ export async function scrapeInstagramProfile(
 
   // Approach 1: Try the web profile info API
   const apiResult = await tryWebProfileAPI(cleanUsername);
-  if (apiResult) return apiResult;
+  if (apiResult && apiResult.captions.length > 0) return apiResult;
 
-  // Approach 2: Try scraping the HTML page meta tags + embedded JSON
+  // Approach 2: Try GraphQL API
+  const gqlResult = await tryGraphQLAPI(cleanUsername);
+  if (gqlResult && gqlResult.captions.length > 0) return gqlResult;
+
+  // Approach 3: Try the /?__a=1&__d=dis endpoint
+  const jsonResult = await tryJSONEndpoint(cleanUsername);
+  if (jsonResult && jsonResult.captions.length > 0) return jsonResult;
+
+  // Approach 4: Try scraping the HTML page meta tags + embedded JSON
   const htmlResult = await tryHTMLScrape(cleanUsername);
   if (htmlResult) return htmlResult;
 
-  // Approach 3: Try the i.instagram.com mobile-style endpoint
+  // Approach 5: Try the mobile search API (no captions, but gets basic profile)
   const mobileResult = await tryMobileAPI(cleanUsername);
   if (mobileResult) return mobileResult;
 
-  return null;
+  // Return any partial result we got (even without captions)
+  return apiResult || gqlResult || jsonResult || null;
 }
 
 const BROWSER_HEADERS = {
@@ -84,6 +93,114 @@ async function tryWebProfileAPI(
 
     return {
       username: user.username,
+      fullName: user.full_name || "",
+      biography: user.biography || "",
+      followerCount: user.edge_followed_by?.count ?? 0,
+      followingCount: user.edge_follow?.count ?? 0,
+      postCount: user.edge_owner_to_timeline_media?.count ?? 0,
+      isPrivate: user.is_private ?? false,
+      profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
+      externalUrl: user.external_url || "",
+      category: user.category_name || "",
+      recentCaptions: captions.map((c) => c.text),
+      captions,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function tryGraphQLAPI(
+  username: string
+): Promise<InstagramProfile | null> {
+  try {
+    // First get user ID from web profile API (lightweight call)
+    const infoUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`;
+    const infoRes = await fetch(infoUrl, {
+      headers: {
+        ...BROWSER_HEADERS,
+        "X-IG-App-ID": "936619743392459",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!infoRes.ok) return null;
+
+    const infoData = await infoRes.json();
+    const user = infoData?.data?.user;
+    if (!user?.id) return null;
+
+    // Use GraphQL query to fetch media with captions
+    const queryHash = "69cba40317214236af40e7efa697781d";
+    const variables = JSON.stringify({
+      id: user.id,
+      first: 25,
+    });
+    const gqlUrl = `https://www.instagram.com/graphql/query/?query_hash=${queryHash}&variables=${encodeURIComponent(variables)}`;
+
+    const gqlRes = await fetch(gqlUrl, {
+      headers: {
+        ...BROWSER_HEADERS,
+        "X-IG-App-ID": "936619743392459",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!gqlRes.ok) return null;
+
+    const gqlData = await gqlRes.json();
+    const edges =
+      gqlData?.data?.user?.edge_owner_to_timeline_media?.edges;
+    const captions = extractRichCaptionsFromEdges(edges);
+
+    return {
+      username: user.username,
+      fullName: user.full_name || "",
+      biography: user.biography || "",
+      followerCount: user.edge_followed_by?.count ?? 0,
+      followingCount: user.edge_follow?.count ?? 0,
+      postCount: user.edge_owner_to_timeline_media?.count ?? 0,
+      isPrivate: user.is_private ?? false,
+      profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
+      externalUrl: user.external_url || "",
+      category: user.category_name || "",
+      recentCaptions: captions.map((c) => c.text),
+      captions,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function tryJSONEndpoint(
+  username: string
+): Promise<InstagramProfile | null> {
+  try {
+    const url = `https://www.instagram.com/${username}/?__a=1&__d=dis`;
+    const res = await fetch(url, {
+      headers: {
+        ...BROWSER_HEADERS,
+        "X-IG-App-ID": "936619743392459",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const user = data?.graphql?.user ?? data?.user;
+    if (!user) return null;
+
+    const captions = extractRichCaptionsFromEdges(
+      user.edge_owner_to_timeline_media?.edges
+    );
+
+    return {
+      username: user.username || username,
       fullName: user.full_name || "",
       biography: user.biography || "",
       followerCount: user.edge_followed_by?.count ?? 0,
