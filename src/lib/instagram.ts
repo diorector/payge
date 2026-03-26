@@ -38,8 +38,9 @@ export async function scrapeInstagramProfile(
   if (rapidApiKey) {
     console.log(`[scraper] Trying RapidAPI for @${cleanUsername}...`);
     const rapidResult = await tryRapidAPI(cleanUsername, rapidApiKey);
-    if (rapidResult && rapidResult.captions.length > 0) {
-      console.log(`[scraper] RapidAPI success: ${rapidResult.captions.length} captions`);
+    if (rapidResult) {
+      console.log(`[scraper] RapidAPI success: ${rapidResult.captions.length} captions, ${rapidResult.followerCount} followers, ${rapidResult.postCount} posts`);
+      // Always return RapidAPI result — it's the most reliable source
       return rapidResult;
     }
   }
@@ -107,29 +108,71 @@ async function tryRapidAPI(
     }
 
     const infoData = await infoRes.json();
-    const user = infoData?.data;
+
+    // Debug: log the raw response structure to find where user data lives
+    const topKeys = Object.keys(infoData || {});
+    console.log(`[scraper] RapidAPI 2025 info response top-level keys: ${JSON.stringify(topKeys)}`);
+    console.log(`[scraper] RapidAPI 2025 info response (truncated): ${JSON.stringify(infoData).slice(0, 1000)}`);
+
+    // Store raw debug info for API response inspection
+    (globalThis as Record<string, unknown>).__rapidapi_debug = {
+      infoTopKeys: topKeys,
+      infoSample: JSON.stringify(infoData).slice(0, 2000),
+    };
+
+    // Try multiple possible response structures
+    const user =
+      infoData?.data?.user ||   // might be nested under data.user
+      infoData?.data ||          // might be directly under data
+      infoData?.user ||          // might be under user
+      infoData;                  // might be the top-level object itself
+
     if (!user || (!user.username && !user.full_name)) {
-      console.log(`[scraper] RapidAPI 2025: no user data in response`);
+      console.log(`[scraper] RapidAPI 2025: no user data found in any known path`);
       return null;
     }
+
+    console.log(`[scraper] RapidAPI 2025 parsed user: username=${user.username}, followers=${user.follower_count}, posts=${user.media_count}`);
+
+    // Also try alternative field names
+    const followerCount = user.follower_count ?? user.edge_followed_by?.count ?? user.followers ?? 0;
+    const followingCount = user.following_count ?? user.edge_follow?.count ?? user.following ?? 0;
+    const postCount = user.media_count ?? user.edge_owner_to_timeline_media?.count ?? user.posts ?? 0;
 
     // Extract posts
     let captions: InstagramCaption[] = [];
     if (postsRes.ok) {
       const postsData = await postsRes.json();
-      const items = postsData?.data?.items || [];
+      console.log(`[scraper] RapidAPI 2025 posts response top-level keys: ${JSON.stringify(Object.keys(postsData || {}))}`);
+      console.log(`[scraper] RapidAPI 2025 posts response (truncated): ${JSON.stringify(postsData).slice(0, 1000)}`);
+
+      // Try multiple possible post structures
+      const items =
+        postsData?.data?.items ||
+        postsData?.data?.edges ||
+        postsData?.data ||
+        postsData?.items ||
+        postsData?.edges ||
+        [];
       captions = extractCaptionsFromRapidAPI(
         Array.isArray(items) ? items : []
       );
+
+      // Store posts debug too
+      (globalThis as Record<string, unknown>).__rapidapi_debug = {
+        ...((globalThis as Record<string, unknown>).__rapidapi_debug as Record<string, unknown> || {}),
+        postsTopKeys: Object.keys(postsData || {}),
+        postsSample: JSON.stringify(postsData).slice(0, 2000),
+      };
     }
 
     return {
       username: user.username || username,
-      fullName: user.full_name || "",
-      biography: user.biography || "",
-      followerCount: user.follower_count ?? 0,
-      followingCount: user.following_count ?? 0,
-      postCount: user.media_count ?? 0,
+      fullName: user.full_name || user.fullName || "",
+      biography: user.biography || user.bio || "",
+      followerCount,
+      followingCount,
+      postCount,
       isPrivate: user.is_private ?? false,
       profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
       externalUrl: user.external_url || "",
