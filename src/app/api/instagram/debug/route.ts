@@ -34,6 +34,50 @@ export async function GET(request: NextRequest) {
     const infoBody = infoRes.ok ? await infoRes.json() : await infoRes.text();
     const postsBody = postsRes.ok ? await postsRes.json() : await postsRes.text();
 
+    // For posts, only return top-level keys and first item summary (to avoid huge response)
+    let postsSummary: unknown = postsBody;
+    if (postsRes.ok && typeof postsBody === "object" && postsBody !== null) {
+      const p = postsBody as Record<string, unknown>;
+      const topKeys = Object.keys(p);
+
+      // Find the array of posts wherever it is
+      let items: unknown[] = [];
+      for (const key of topKeys) {
+        if (Array.isArray(p[key])) {
+          items = p[key] as unknown[];
+          break;
+        }
+        if (typeof p[key] === "object" && p[key] !== null) {
+          const nested = p[key] as Record<string, unknown>;
+          for (const nk of Object.keys(nested)) {
+            if (Array.isArray(nested[nk])) {
+              items = nested[nk] as unknown[];
+              break;
+            }
+          }
+          if (items.length > 0) break;
+        }
+      }
+
+      // Get keys from first item
+      const firstItem = items[0] as Record<string, unknown> | undefined;
+      postsSummary = {
+        topKeys,
+        itemCount: items.length,
+        firstItemKeys: firstItem ? Object.keys(firstItem) : [],
+        firstItemCaptionSample: firstItem?.caption
+          ? JSON.stringify(firstItem.caption).slice(0, 300)
+          : "no caption field",
+        firstItemSample: firstItem
+          ? Object.fromEntries(
+              Object.entries(firstItem)
+                .filter(([, v]) => typeof v !== "object" || v === null)
+                .slice(0, 15)
+            )
+          : null,
+      };
+    }
+
     return NextResponse.json({
       info: {
         status: infoRes.status,
@@ -43,10 +87,7 @@ export async function GET(request: NextRequest) {
       posts: {
         status: postsRes.status,
         ok: postsRes.ok,
-        // Truncate posts to avoid massive response
-        body: typeof postsBody === "string"
-          ? postsBody.slice(0, 3000)
-          : JSON.parse(JSON.stringify(postsBody, null, 0).slice(0, 8000)),
+        body: postsSummary,
       },
     });
   } catch (e) {
