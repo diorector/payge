@@ -23,36 +23,202 @@ export interface InstagramProfile {
 
 /**
  * Scrape public Instagram profile data.
- * Tries multiple approaches in order of reliability.
+ * Priority:
+ *  1. RapidAPI (if RAPIDAPI_KEY set) — most reliable, third-party proxy
+ *  2. Authenticated Instagram API (if INSTAGRAM_SESSION_ID set) — direct w/ cookie
+ *  3. Unauthenticated Instagram APIs (multiple fallbacks)
  */
 export async function scrapeInstagramProfile(
   username: string
 ): Promise<InstagramProfile | null> {
   const cleanUsername = username.replace("@", "").trim();
 
-  // Approach 1: Try the web profile info API
+  // --- Tier 1: RapidAPI proxy (most reliable, no Instagram blocks) ---
+  const rapidApiKey = process.env.RAPIDAPI_KEY;
+  if (rapidApiKey) {
+    console.log(`[scraper] Trying RapidAPI for @${cleanUsername}...`);
+    const rapidResult = await tryRapidAPI(cleanUsername, rapidApiKey);
+    if (rapidResult && rapidResult.captions.length > 0) {
+      console.log(`[scraper] RapidAPI success: ${rapidResult.captions.length} captions`);
+      return rapidResult;
+    }
+  }
+
+  // --- Tier 2: Authenticated Instagram API (session cookie) ---
+  const sessionId = process.env.INSTAGRAM_SESSION_ID;
+  if (sessionId) {
+    console.log(`[scraper] Trying authenticated API for @${cleanUsername}...`);
+    const authResult = await tryAuthenticatedAPI(cleanUsername, sessionId);
+    if (authResult && authResult.captions.length > 0) {
+      console.log(`[scraper] Auth API success: ${authResult.captions.length} captions`);
+      return authResult;
+    }
+  }
+
+  // --- Tier 3: Unauthenticated approaches (least reliable) ---
+  console.log(`[scraper] Trying unauthenticated approaches for @${cleanUsername}...`);
+
   const apiResult = await tryWebProfileAPI(cleanUsername);
   if (apiResult && apiResult.captions.length > 0) return apiResult;
 
-  // Approach 2: Try GraphQL API
-  const gqlResult = await tryGraphQLAPI(cleanUsername);
-  if (gqlResult && gqlResult.captions.length > 0) return gqlResult;
-
-  // Approach 3: Try the /?__a=1&__d=dis endpoint
   const jsonResult = await tryJSONEndpoint(cleanUsername);
   if (jsonResult && jsonResult.captions.length > 0) return jsonResult;
 
-  // Approach 4: Try scraping the HTML page meta tags + embedded JSON
   const htmlResult = await tryHTMLScrape(cleanUsername);
-  if (htmlResult) return htmlResult;
+  if (htmlResult && htmlResult.captions.length > 0) return htmlResult;
 
-  // Approach 5: Try the mobile search API (no captions, but gets basic profile)
+  // --- Tier 4: At least get basic profile info ---
   const mobileResult = await tryMobileAPI(cleanUsername);
   if (mobileResult) return mobileResult;
 
-  // Return any partial result we got (even without captions)
-  return apiResult || gqlResult || jsonResult || null;
+  // Return any partial result (even without captions)
+  return apiResult || jsonResult || htmlResult || null;
 }
+
+// ========== Tier 1: RapidAPI ==========
+
+async function tryRapidAPI(
+  username: string,
+  apiKey: string
+): Promise<InstagramProfile | null> {
+  try {
+    // Get profile info
+    const infoRes = await fetch(
+      `https://instagram-scraper-api2.p.rapidapi.com/v1/info?username_or_id_or_url=${encodeURIComponent(username)}`,
+      {
+        headers: {
+          "x-rapidapi-key": apiKey,
+          "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com",
+        },
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+
+    if (!infoRes.ok) {
+      console.log(`[scraper] RapidAPI info failed: ${infoRes.status}`);
+      return null;
+    }
+
+    const infoData = await infoRes.json();
+    const user = infoData?.data;
+    if (!user) return null;
+
+    // Get posts
+    const postsRes = await fetch(
+      `https://instagram-scraper-api2.p.rapidapi.com/v1.2/posts?username_or_id_or_url=${encodeURIComponent(username)}`,
+      {
+        headers: {
+          "x-rapidapi-key": apiKey,
+          "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com",
+        },
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+
+    let captions: InstagramCaption[] = [];
+
+    if (postsRes.ok) {
+      const postsData = await postsRes.json();
+      const items = postsData?.data?.items || postsData?.data || [];
+      captions = extractCaptionsFromRapidAPI(items);
+    }
+
+    return {
+      username: user.username || username,
+      fullName: user.full_name || "",
+      biography: user.biography || "",
+      followerCount: user.follower_count ?? 0,
+      followingCount: user.following_count ?? 0,
+      postCount: user.media_count ?? 0,
+      isPrivate: user.is_private ?? false,
+      profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
+      externalUrl: user.external_url || "",
+      category: user.category_name || user.category || "",
+      recentCaptions: captions.map((c) => c.text),
+      captions,
+    };
+  } catch (e) {
+    console.log(`[scraper] RapidAPI error:`, e);
+    return null;
+  }
+}
+
+function extractCaptionsFromRapidAPI(items: unknown[]): InstagramCaption[] {
+  if (!Array.isArray(items)) return [];
+  const results: InstagramCaption[] = [];
+
+  for (const item of items.slice(0, MAX_CAPTIONS)) {
+    const post = item as Record<string, unknown>;
+    const caption = post.caption as Record<string, unknown> | null;
+    const text = (caption?.text as string) || "";
+    if (!text) continue;
+
+    results.push({
+      text,
+      timestamp: post.taken_at
+        ? new Date((post.taken_at as number) * 1000).toISOString()
+        : undefined,
+      likeCount: (post.like_count as number) ?? undefined,
+      commentCount: (post.comment_count as number) ?? undefined,
+      mediaType:
+        (post.media_type as number) === 2
+          ? "VIDEO"
+          : (post.media_type as number) === 8
+            ? "CAROUSEL_ALBUM"
+            : "IMAGE",
+    });
+  }
+  return results;
+}
+
+// ========== Tier 2: Authenticated Instagram API ==========
+
+async function tryAuthenticatedAPI(
+  username: string,
+  sessionId: string
+): Promise<InstagramProfile | null> {
+  try {
+    const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`;
+    const res = await fetch(url, {
+      headers: {
+        ...BROWSER_HEADERS,
+        "X-IG-App-ID": "936619743392459",
+        "X-Requested-With": "XMLHttpRequest",
+        Cookie: `sessionid=${sessionId}`,
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const user = data?.data?.user;
+    if (!user) return null;
+
+    const captions = extractRichCaptionsFromEdges(
+      user.edge_owner_to_timeline_media?.edges
+    );
+
+    return {
+      username: user.username,
+      fullName: user.full_name || "",
+      biography: user.biography || "",
+      followerCount: user.edge_followed_by?.count ?? 0,
+      followingCount: user.edge_follow?.count ?? 0,
+      postCount: user.edge_owner_to_timeline_media?.count ?? 0,
+      isPrivate: user.is_private ?? false,
+      profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
+      externalUrl: user.external_url || "",
+      category: user.category_name || "",
+      recentCaptions: captions.map((c) => c.text),
+      captions,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ========== Tier 3: Unauthenticated approaches ==========
 
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -90,70 +256,6 @@ async function tryWebProfileAPI(
     const captions = extractRichCaptionsFromEdges(
       user.edge_owner_to_timeline_media?.edges
     );
-
-    return {
-      username: user.username,
-      fullName: user.full_name || "",
-      biography: user.biography || "",
-      followerCount: user.edge_followed_by?.count ?? 0,
-      followingCount: user.edge_follow?.count ?? 0,
-      postCount: user.edge_owner_to_timeline_media?.count ?? 0,
-      isPrivate: user.is_private ?? false,
-      profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
-      externalUrl: user.external_url || "",
-      category: user.category_name || "",
-      recentCaptions: captions.map((c) => c.text),
-      captions,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function tryGraphQLAPI(
-  username: string
-): Promise<InstagramProfile | null> {
-  try {
-    // First get user ID from web profile API (lightweight call)
-    const infoUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`;
-    const infoRes = await fetch(infoUrl, {
-      headers: {
-        ...BROWSER_HEADERS,
-        "X-IG-App-ID": "936619743392459",
-        "X-Requested-With": "XMLHttpRequest",
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-
-    if (!infoRes.ok) return null;
-
-    const infoData = await infoRes.json();
-    const user = infoData?.data?.user;
-    if (!user?.id) return null;
-
-    // Use GraphQL query to fetch media with captions
-    const queryHash = "69cba40317214236af40e7efa697781d";
-    const variables = JSON.stringify({
-      id: user.id,
-      first: 25,
-    });
-    const gqlUrl = `https://www.instagram.com/graphql/query/?query_hash=${queryHash}&variables=${encodeURIComponent(variables)}`;
-
-    const gqlRes = await fetch(gqlUrl, {
-      headers: {
-        ...BROWSER_HEADERS,
-        "X-IG-App-ID": "936619743392459",
-        "X-Requested-With": "XMLHttpRequest",
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!gqlRes.ok) return null;
-
-    const gqlData = await gqlRes.json();
-    const edges =
-      gqlData?.data?.user?.edge_owner_to_timeline_media?.edges;
-    const captions = extractRichCaptionsFromEdges(edges);
 
     return {
       username: user.username,
@@ -267,7 +369,6 @@ async function tryHTMLScrape(
     }
 
     // Parse follower counts from og:description
-    // Format: "123 Followers, 45 Following, 67 Posts - See Instagram photos..."
     const statsMatch = biography.match(
       /(\d[\d,.KkMm]*)\s*(?:Followers|팔로워)/i
     );
@@ -385,6 +486,8 @@ async function tryMobileAPI(
   }
 }
 
+// ========== Shared Utilities ==========
+
 const MAX_CAPTIONS = 25;
 
 interface EdgeNode {
@@ -437,7 +540,6 @@ function extractMeta(html: string, property: string): string | null {
   const match = html.match(regex);
   if (match) return decodeHTMLEntities(match[1]);
 
-  // Try name attribute too
   const nameRegex = new RegExp(
     `<meta[^>]*name=["']${property}["'][^>]*content=["']([^"']*?)["']`,
     "i"
@@ -458,11 +560,8 @@ function decodeHTMLEntities(str: string): string {
 }
 
 function cleanBioFromOG(ogDescription: string): string {
-  // OG description format: "123 Followers, 45 Following, 67 Posts - See Instagram photos and videos from Name (@user)"
-  // We want to extract just the bio part if present
   const parts = ogDescription.split(" - ");
   if (parts.length > 1) {
-    // Remove the "See Instagram photos..." suffix
     const bio = parts
       .slice(1)
       .join(" - ")
@@ -531,7 +630,6 @@ export function formatProfileForAI(profile: InstagramProfile): string {
       );
     });
   } else if (profile.recentCaptions.length > 0) {
-    // Fallback to plain captions
     sections.push(
       `\n## 최근 게시물 캡션 (${profile.recentCaptions.length}개)`
     );
