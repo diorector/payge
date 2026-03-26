@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { READING_DNA_ANALYSIS_PROMPT, FULL_ANALYSIS_PROMPT } from "@/lib/prompts";
 import type { PreAnalysisResult, FullAnalysisResult } from "@/lib/types";
 import { getScoreLabel } from "@/lib/types";
+import { scrapeInstagramProfile, formatProfileForAI } from "@/lib/instagram";
 
 // POST /api/instagram/analyze
 // Body: { instagramId: string, step: "preAnalysis" | "fullAnalysis", preAnalysis?: PreAnalysisResult, answers?: number[] }
@@ -65,17 +66,53 @@ async function runPreAnalysis(
   apiKey: string,
   provider: string
 ): Promise<PreAnalysisResult> {
-  // In production, this would first fetch Instagram profile data
-  // For now, we pass the Instagram ID to the AI and let it work with the ID
-  const userMessage = `인스타그램 ID: @${instagramId}
+  // Step 1: Scrape real Instagram profile data
+  console.log(`[preAnalysis] Scraping @${instagramId}...`);
+  const profile = await scrapeInstagramProfile(instagramId);
 
-이 사용자의 인스타그램 프로필을 분석해서 독서 DNA를 진단해주세요.
+  let userMessage: string;
 
-참고: 실제 인스타그램 데이터에 접근할 수 없으므로, 이 ID의 사용자가 일반적인 한국인 인스타그램 사용자라고 가정하고,
-ID에서 유추할 수 있는 정보(직업, 관심사 등)와 일반적인 인스타그램 활동 패턴을 기반으로 분석해주세요.
-실감나는 개인화된 분석을 위해, 구체적이고 현실적인 인스타그램 활동을 상상해서 evidence로 활용하세요.
+  if (profile && !profile.isPrivate) {
+    // Real data available — use it
+    const profileData = formatProfileForAI(profile);
+    const captionCount = profile.recentCaptions.length;
+
+    console.log(
+      `[preAnalysis] Scraped @${instagramId}: ${captionCount} captions, ${profile.followerCount} followers`
+    );
+
+    userMessage = `${profileData}
+
+위 인스타그램 프로필과 게시물 캡션을 분석해서 독서 DNA를 진단해주세요.
+${captionCount > 0
+  ? `캡션 ${captionCount}개를 기반으로 이 사람의 관심사, 말투, 가치관을 파악하고 evidence에 구체적 캡션 내용을 인용하세요.`
+  : "캡션을 가져오지 못했지만, 바이오와 프로필 정보를 최대한 활용하세요."}
+personalizedQuestions에서 반드시 이 사람의 실제 인스타 활동을 언급하세요.
 
 반드시 지정된 JSON 형식으로만 응답하세요.`;
+  } else if (profile?.isPrivate) {
+    // Private account
+    userMessage = `인스타그램 ID: @${instagramId}
+이름: ${profile.fullName || "알 수 없음"}
+프로필: 비공개 계정
+
+비공개 계정이라 게시물을 볼 수 없습니다.
+이름과 ID에서 유추할 수 있는 정보를 기반으로 분석해주세요.
+personalizedQuestions는 일반적이되 자연스러운 질문으로 구성하세요.
+
+반드시 지정된 JSON 형식으로만 응답하세요.`;
+  } else {
+    // Scraping failed — fallback to ID-only analysis
+    console.log(`[preAnalysis] Scraping failed for @${instagramId}, using ID-only analysis`);
+
+    userMessage = `인스타그램 ID: @${instagramId}
+
+인스타그램 프로필 데이터를 가져오지 못했습니다.
+ID에서 유추할 수 있는 정보(직업, 관심사 등)를 기반으로 분석해주세요.
+personalizedQuestions는 자연스럽고 범용적인 질문으로 구성하되, 가능하면 ID에서 힌트를 얻어 개인화하세요.
+
+반드시 지정된 JSON 형식으로만 응답하세요.`;
+  }
 
   const rawResult = await callAI(
     READING_DNA_ANALYSIS_PROMPT,
