@@ -36,7 +36,6 @@ export async function POST(request: NextRequest) {
         _debug: {
           hasRapidApiKey: !!process.env.RAPIDAPI_KEY,
           rapidApiKeyPrefix: process.env.RAPIDAPI_KEY?.slice(0, 6) ?? "NOT_SET",
-          rapidApiRaw: (globalThis as Record<string, unknown>).__rapidapi_debug ?? "no_debug_data",
         },
       });
     }

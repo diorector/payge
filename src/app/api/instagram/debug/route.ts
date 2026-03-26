@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 // GET /api/instagram/debug?username=kimdohyungg
-// Tries multiple possible RapidAPI endpoint patterns and returns results
+// Returns raw RapidAPI responses for debugging
 export async function GET(request: NextRequest) {
   const username = request.nextUrl.searchParams.get("username");
   if (!username) {
@@ -19,52 +19,37 @@ export async function GET(request: NextRequest) {
     "x-rapidapi-host": host,
   };
 
-  // Try many possible endpoint patterns
-  const endpoints = [
-    `/v1/info?username_or_id=${username}`,
-    `/v1/posts?username_or_id=${username}`,
-    `/v2/info?username_or_id=${username}`,
-    `/v2/posts?username_or_id=${username}`,
-    `/info?username_or_id=${username}`,
-    `/posts?username_or_id=${username}`,
-    `/user/info?username=${username}`,
-    `/user/posts?username=${username}`,
-    `/profile?username=${username}`,
-    `/user?username=${username}`,
-    `/${username}`,
-    `/user/${username}`,
-    `/profile/${username}`,
-    `/v1/user/${username}`,
-    `/v1/profile?username=${username}`,
-    `/v1/user?username=${username}`,
-    `/api/profile?username=${username}`,
-    `/instagram/user/${username}`,
-    `/user/info?username_or_id_or_url=${username}`,
-  ];
-
-  const results: Record<string, { status: number; body: string }> = {};
-
-  // Run all in parallel
-  const promises = endpoints.map(async (endpoint) => {
-    try {
-      const res = await fetch(`https://${host}${endpoint}`, {
+  try {
+    const [infoRes, postsRes] = await Promise.all([
+      fetch(`https://${host}/userinfo/?username_or_id=${encodeURIComponent(username)}`, {
         headers,
-        signal: AbortSignal.timeout(10000),
-      });
-      const text = await res.text();
-      results[endpoint] = {
-        status: res.status,
-        body: text.slice(0, 500),
-      };
-    } catch (e) {
-      results[endpoint] = {
-        status: 0,
-        body: `Error: ${String(e).slice(0, 200)}`,
-      };
-    }
-  });
+        signal: AbortSignal.timeout(15000),
+      }),
+      fetch(`https://${host}/userposts/?username_or_id=${encodeURIComponent(username)}`, {
+        headers,
+        signal: AbortSignal.timeout(20000),
+      }),
+    ]);
 
-  await Promise.all(promises);
+    const infoBody = infoRes.ok ? await infoRes.json() : await infoRes.text();
+    const postsBody = postsRes.ok ? await postsRes.json() : await postsRes.text();
 
-  return NextResponse.json({ username, results });
+    return NextResponse.json({
+      info: {
+        status: infoRes.status,
+        ok: infoRes.ok,
+        body: infoBody,
+      },
+      posts: {
+        status: postsRes.status,
+        ok: postsRes.ok,
+        // Truncate posts to avoid massive response
+        body: typeof postsBody === "string"
+          ? postsBody.slice(0, 3000)
+          : JSON.parse(JSON.stringify(postsBody, null, 0).slice(0, 8000)),
+      },
+    });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
 }
