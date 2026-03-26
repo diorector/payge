@@ -42,7 +42,8 @@ function DNACardContent() {
   const typeDescription =
     fullAnalysis?.readingTypeDescription ??
     "인스타그램 분석을 기반으로 당신에게 딱 맞는 독서 DNA를 찾았어요.";
-  const mainBook = fullAnalysis?.bookRecommendations?.[0] ?? null;
+  // instantBook from preAnalysis is always available (free 1 book)
+  const mainBook = analysis.instantBook ?? fullAnalysis?.bookRecommendations?.[0] ?? null;
 
   return (
     <main className="flex-1 flex flex-col items-center px-5 py-8 page-transition">

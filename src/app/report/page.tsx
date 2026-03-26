@@ -131,32 +131,34 @@ function ReportContent() {
             <h3 className="font-bold">AI 추천 책 5권</h3>
           </div>
 
-          {/* First book (free) */}
-          {analysis?.bookRecommendations?.[0] && (
-            <div className="bg-white rounded-2xl border border-[var(--border)] p-5 mb-3">
-              <div className="flex gap-4">
-                <div className="w-16 h-22 bg-gradient-to-br from-[var(--accent)] to-[#8BC34A] rounded-lg flex items-center justify-center flex-shrink-0 shadow">
-                  <span className="text-xl font-bold text-white">
-                    {analysis.bookRecommendations[0].title[0]}
-                  </span>
+          {/* First book (free - from instantBook) */}
+          {(preAnalysis?.instantBook ?? analysis?.bookRecommendations?.[0]) && (() => {
+            const freeBook = preAnalysis?.instantBook ?? analysis?.bookRecommendations?.[0];
+            if (!freeBook) return null;
+            return (
+              <div className="bg-white rounded-2xl border border-[var(--border)] p-5 mb-3">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs bg-[var(--accent)] text-[var(--foreground)] font-bold px-2 py-0.5 rounded">무료</span>
+                  <span className="text-xs text-[var(--muted)]">지금 필요한 책 1권</span>
                 </div>
-                <div>
-                  <h4 className="font-bold">
-                    {analysis.bookRecommendations[0].title}
-                  </h4>
-                  <p className="text-xs text-[var(--muted)]">
-                    {analysis.bookRecommendations[0].author}
-                  </p>
-                  <p className="text-sm mt-1 leading-relaxed">
-                    {analysis.bookRecommendations[0].reason}
-                  </p>
+                <div className="flex gap-4">
+                  <div className="w-16 h-22 bg-gradient-to-br from-[var(--accent)] to-[#8BC34A] rounded-lg flex items-center justify-center flex-shrink-0 shadow">
+                    <span className="text-xl font-bold text-white">
+                      {freeBook.title[0]}
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="font-bold">{freeBook.title}</h4>
+                    <p className="text-xs text-[var(--muted)]">{freeBook.author}</p>
+                    <p className="text-sm mt-1 leading-relaxed">{freeBook.reason}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
-          {/* Remaining books (locked) */}
-          {(analysis?.bookRecommendations?.slice(1) ?? [
+          {/* Remaining 4 books (locked) */}
+          {(analysis?.bookRecommendations ?? [
             { title: "추천 도서 2", author: "저자", reason: "개인화된 추천 사유가 여기에 표시됩니다." },
             { title: "추천 도서 3", author: "저자", reason: "개인화된 추천 사유가 여기에 표시됩니다." },
             { title: "추천 도서 4", author: "저자", reason: "개인화된 추천 사유가 여기에 표시됩니다." },

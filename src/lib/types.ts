@@ -72,13 +72,14 @@ export interface PreAnalysisResult {
   readingDNA: ReadingDNA;
   items: ReadingDNAItem[]; // 20개 항목 (차원별 4개)
   personalizedQuestions: PersonalizedQuestion[]; // 5개 개인화 질문
+  instantBook: BookRecommendation; // AI가 즉시 추천하는 1권 (무료)
 }
 
 export interface FullAnalysisResult extends PreAnalysisResult {
   readingTypeName: string; // "현실을 바꾸는 지적 탐험가"
   readingTypeDescription: string;
   matchPercent: string; // "93.2"
-  bookRecommendations: BookRecommendation[]; // 5권
+  bookRecommendations: BookRecommendation[]; // 4권 (instantBook 제외 추가분)
   personaLayers: ReadingPersonaLayers;
   readingCompatibility: ReadingCompatibility;
   readingRoadmap: {

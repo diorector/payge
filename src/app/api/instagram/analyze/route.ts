@@ -121,7 +121,11 @@ ${preAnalysis.personalizedQuestions
     .map((q, i) => `Q: ${q.question}\nA: ${q.options[answers[i]]} (선택: ${answers[i] + 1}번)`)
     .join("\n\n")}
 
+## preAnalysis에서 이미 추천된 책 (중복 금지)
+${JSON.stringify(preAnalysis.instantBook)}
+
 위 분석 결과를 바탕으로 종합 독서 리포트를 생성해주세요.
+이미 추천된 책(${preAnalysis.instantBook?.title ?? "없음"})은 제외하고 나머지 4권을 추천하세요.
 반드시 지정된 JSON 형식으로만 응답하세요.`;
 
   const rawResult = await callAI(
