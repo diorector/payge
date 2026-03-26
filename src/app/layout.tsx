@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AnalysisProvider } from "@/lib/analysis-context";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,7 +21,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <AnalysisProvider>{children}</AnalysisProvider>
+      </body>
     </html>
   );
 }
