@@ -31,7 +31,13 @@ export async function POST(request: NextRequest) {
 
     if (step === "preAnalysis") {
       const result = await runPreAnalysis(instagramId, apiKey, provider);
-      return NextResponse.json(result);
+      return NextResponse.json({
+        ...result,
+        _debug: {
+          hasRapidApiKey: !!process.env.RAPIDAPI_KEY,
+          rapidApiKeyPrefix: process.env.RAPIDAPI_KEY?.slice(0, 6) ?? "NOT_SET",
+        },
+      });
     }
 
     if (step === "fullAnalysis") {
