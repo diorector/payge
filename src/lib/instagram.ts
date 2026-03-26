@@ -75,52 +75,52 @@ export async function scrapeInstagramProfile(
   return apiResult || jsonResult || htmlResult || null;
 }
 
-// ========== Tier 1: RapidAPI ==========
+// ========== Tier 1: RapidAPI (Instagram Scraper 2025) ==========
+
+const RAPIDAPI_HOST = "instagram-scraper-20251.p.rapidapi.com";
 
 async function tryRapidAPI(
   username: string,
   apiKey: string
 ): Promise<InstagramProfile | null> {
   try {
-    // Get profile info
-    const infoRes = await fetch(
-      `https://instagram-scraper-api2.p.rapidapi.com/v1/info?username_or_id_or_url=${encodeURIComponent(username)}`,
-      {
-        headers: {
-          "x-rapidapi-key": apiKey,
-          "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com",
-        },
-        signal: AbortSignal.timeout(15000),
-      }
-    );
+    // Fetch profile info and posts in parallel
+    const headers = {
+      "x-rapidapi-key": apiKey,
+      "x-rapidapi-host": RAPIDAPI_HOST,
+    };
+
+    const [infoRes, postsRes] = await Promise.all([
+      fetch(
+        `https://${RAPIDAPI_HOST}/v1/info?username_or_id=${encodeURIComponent(username)}`,
+        { headers, signal: AbortSignal.timeout(15000) }
+      ),
+      fetch(
+        `https://${RAPIDAPI_HOST}/v1/posts?username_or_id=${encodeURIComponent(username)}`,
+        { headers, signal: AbortSignal.timeout(20000) }
+      ),
+    ]);
 
     if (!infoRes.ok) {
-      console.log(`[scraper] RapidAPI info failed: ${infoRes.status}`);
+      console.log(`[scraper] RapidAPI 2025 profile failed: ${infoRes.status}`);
       return null;
     }
 
     const infoData = await infoRes.json();
     const user = infoData?.data;
-    if (!user) return null;
+    if (!user || (!user.username && !user.full_name)) {
+      console.log(`[scraper] RapidAPI 2025: no user data in response`);
+      return null;
+    }
 
-    // Get posts
-    const postsRes = await fetch(
-      `https://instagram-scraper-api2.p.rapidapi.com/v1.2/posts?username_or_id_or_url=${encodeURIComponent(username)}`,
-      {
-        headers: {
-          "x-rapidapi-key": apiKey,
-          "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com",
-        },
-        signal: AbortSignal.timeout(15000),
-      }
-    );
-
+    // Extract posts
     let captions: InstagramCaption[] = [];
-
     if (postsRes.ok) {
       const postsData = await postsRes.json();
-      const items = postsData?.data?.items || postsData?.data || [];
-      captions = extractCaptionsFromRapidAPI(items);
+      const items = postsData?.data?.items || [];
+      captions = extractCaptionsFromRapidAPI(
+        Array.isArray(items) ? items : []
+      );
     }
 
     return {
@@ -133,12 +133,12 @@ async function tryRapidAPI(
       isPrivate: user.is_private ?? false,
       profilePicUrl: user.profile_pic_url_hd || user.profile_pic_url || "",
       externalUrl: user.external_url || "",
-      category: user.category_name || user.category || "",
+      category: user.category || "",
       recentCaptions: captions.map((c) => c.text),
       captions,
     };
   } catch (e) {
-    console.log(`[scraper] RapidAPI error:`, e);
+    console.log(`[scraper] RapidAPI 2025 error:`, e);
     return null;
   }
 }
