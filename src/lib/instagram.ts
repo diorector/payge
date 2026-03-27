@@ -97,7 +97,7 @@ async function tryRapidAPI(
         { headers, signal: AbortSignal.timeout(15000) }
       ),
       fetch(
-        `https://${RAPIDAPI_HOST}/userposts/?username_or_id=${encodeURIComponent(username)}`,
+        `https://${RAPIDAPI_HOST}/userposts/?username_or_id=${encodeURIComponent(username)}&count=30`,
         { headers, signal: AbortSignal.timeout(20000) }
       ),
     ]);
@@ -511,7 +511,7 @@ async function tryMobileAPI(
 
 // ========== Shared Utilities ==========
 
-const MAX_CAPTIONS = 25;
+const MAX_CAPTIONS = 30;
 
 interface EdgeNode {
   node?: {
